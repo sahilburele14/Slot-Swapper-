@@ -1,0 +1,295 @@
+# =====================================================
+# docker-compose.yml
+# =====================================================
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: slotswapper-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: slotswapper
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database-schema.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: slotswapper-backend
+    environment:
+      PORT: 5000
+      NODE_ENV: development
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: slotswapper
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      JWT_SECRET: your_super_secret_jwt_key
+      JWT_EXPIRE: 7d
+      CORS_ORIGIN: http://localhost:3000
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npm run dev
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: slotswapper-frontend
+    environment:
+      REACT_APP_API_URL: http://localhost:5000/api
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: npm start
+
+volumes:
+  postgres_data:
+
+# =====================================================
+# backend/Dockerfile
+# =====================================================
+
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm install
+
+COPY . .
+
+EXPOSE 5000
+
+CMD ["npm", "run", "dev"]
+
+# =====================================================
+# frontend/Dockerfile
+# =====================================================
+
+FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm install
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["npm", "start"]
+
+# =====================================================
+# .dockerignore (for both backend and frontend)
+# =====================================================
+
+node_modules
+npm-debug.log
+.env
+.git
+.gitignore
+README.md
+.DS_Store
+
+# =====================================================
+# .gitignore
+# =====================================================
+
+# Dependencies
+node_modules/
+package-lock.json
+yarn.lock
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+build/
+dist/
+.next/
+out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+coverage/
+
+# Docker
+docker-compose.override.yml
+
+# Database
+*.sqlite
+*.db
+
+# =====================================================
+# setup.sh - Automated Setup Script
+# =====================================================
+
+#!/bin/bash
+
+echo "🚀 SlotSwapper Setup Script"
+echo "============================"
+echo ""
+
+# Check if Node.js is installed
+if ! command -v node &> /dev/null; then
+    echo "❌ Node.js is not installed. Please install Node.js 16+ and try again."
+    exit 1
+fi
+
+# Check if PostgreSQL is installed
+if ! command -v psql &> /dev/null; then
+    echo "❌ PostgreSQL is not installed. Please install PostgreSQL 12+ and try again."
+    exit 1
+fi
+
+echo "✅ Node.js version: $(node --version)"
+echo "✅ PostgreSQL version: $(psql --version)"
+echo ""
+
+# Create PostgreSQL database
+echo "📦 Creating PostgreSQL database..."
+psql -U postgres -c "CREATE DATABASE slotswapper;" 2>/dev/null || echo "Database might already exist, continuing..."
+
+# Run database schema
+echo "📝 Running database schema..."
+psql -U postgres -d slotswapper -f database-schema.sql
+
+# Setup Backend
+echo ""
+echo "⚙️  Setting up backend..."
+cd backend
+
+if [ ! -f .env ]; then
+    echo "Creating backend .env file..."
+    cp .env.example .env
+    echo "⚠️  Please edit backend/.env with your actual configuration"
+fi
+
+echo "Installing backend dependencies..."
+npm install
+
+cd ..
+
+# Setup Frontend
+echo ""
+echo "⚙️  Setting up frontend..."
+cd frontend
+
+if [ ! -f .env ]; then
+    echo "Creating frontend .env file..."
+    echo "REACT_APP_API_URL=http://localhost:5000/api" > .env
+fi
+
+echo "Installing frontend dependencies..."
+npm install
+
+cd ..
+
+echo ""
+echo "✅ Setup complete!"
+echo ""
+echo "To start the application:"
+echo "1. Start the backend: cd backend && npm run dev"
+echo "2. In a new terminal, start the frontend: cd frontend && npm start"
+echo ""
+echo "Or use Docker: docker-compose up"
+echo ""
+echo "📚 Read the README.md for more details"
+
+# =====================================================
+# Render deployment configuration (render.yaml)
+# =====================================================
+
+services:
+  - type: web
+    name: slotswapper-backend
+    env: node
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: slotswapper-db
+          property: connectionString
+
+  - type: web
+    name: slotswapper-frontend
+    env: static
+    buildCommand: cd frontend && npm install && npm run build
+    staticPublishPath: ./frontend/build
+    envVars:
+      - key: REACT_APP_API_URL
+        value: https://slotswapper-backend.onrender.com/api
+
+databases:
+  - name: slotswapper-db
+    plan: free
+    databaseName: slotswapper
+    user: slotswapper
+
+# =====================================================
+# netlify.toml (for frontend deployment)
+# =====================================================
+
+[build]
+  base = "frontend/"
+  publish = "build/"
+  command = "npm run build"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+[build.environment]
+  REACT_APP_API_URL = "https://your-backend-url.onrender.com/api"
