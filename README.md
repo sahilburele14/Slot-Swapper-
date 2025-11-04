@@ -392,7 +392,7 @@ Deleted events automatically cancel related swap requests (ON DELETE CASCADE)
 Sahil Burele
 
 
-GitHub: @yourusername
+GitHub: https://github.com/sahilburele14/Slot-Swapper-
 Email: sahilburele6789@gmail.com
 
 
